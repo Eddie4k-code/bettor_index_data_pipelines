@@ -1,0 +1,67 @@
+---
+description: SOLID design, interfaces/polymorphism, minimal helpers, and TDD workflow
+alwaysApply: true
+---
+
+# SOLID, Interfaces, and TDD
+
+## Test-Driven Development
+
+Always follow red → green → refactor:
+
+1. Write a failing test that describes the desired behavior.
+2. Implement the minimum code to pass.
+3. Refactor while keeping tests green.
+
+Do not add production code without a corresponding test. Mock dependencies via interfaces — never hit real DBs or APIs in unit tests.
+
+## Interfaces and Polymorphism
+
+Depend on abstractions, not concretions:
+
+- Define an ABC in `interfaces/` for every external boundary: repositories, APIs, pipelines, workers.
+- Inject dependencies through constructors typed to the interface.
+- Implementations live in their own modules (`repositories/`, `apis/`, `pipelines/`).
+
+```python
+# ✅ GOOD — extendable via new implementations
+class FeaturedOddsPipeline(FeaturedOddsPipelineInterface):
+    def __init__(self, repo: FeaturedOddsRepositoryInterface, api: BettingDataAPIInterface):
+        self.repo = repo
+        self.api = api
+
+# ❌ BAD — hard to test or swap
+class FeaturedOddsPipeline:
+    def __init__(self):
+        self.repo = FeaturedOddsRepository()
+        self.api = TheOddsAPI()
+```
+
+## SOLID (Practical)
+
+| Principle | Rule |
+|-----------|------|
+| **S** | One reason to change per class/module. Split pipelines, repos, and API clients. |
+| **O** | Extend via new implementations of interfaces — avoid editing call sites for new behavior. |
+| **L** | Subclasses must honor the interface contract; don't weaken preconditions or skip side effects callers rely on. |
+| **I** | Small, focused interfaces — don't force implementers to stub unused methods. |
+| **D** | High-level modules depend on interfaces, not concrete repos or HTTP clients. |
+
+## Avoid Unnecessary Helpers
+
+Do not extract one-off functions that only wrap a single call or rename a variable. Inline simple logic instead.
+
+**Extract only when it earns its keep:**
+
+- Shared across multiple call sites
+- Hides non-obvious domain logic worth naming
+- Test fixtures/factories for complex object graphs (e.g. `_make_event()` in tests)
+
+```python
+# ❌ BAD — pointless wrapper
+def get_odds(api, sport):
+    return api.get_featured_odds(sport=sport)
+
+# ✅ GOOD — inline or keep as a private method when logic is cohesive
+filtered = self._filter_allowed_bookmakers(events)
+```
