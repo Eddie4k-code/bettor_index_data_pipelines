@@ -1,5 +1,6 @@
 """NBA moneyline pregame snapshot orchestrator."""
 
+import logging
 from collections.abc import Callable
 from datetime import datetime, timezone
 
@@ -12,6 +13,8 @@ from interfaces.team_bet_snapshot_builder_interfaces import H2hSnapshotBuilderIn
 from schemas.snapshot import SnapshotRequest, SnapshotRunResult
 from schemas.team_bets import NbaH2hSnapshotRecord
 from schemas.team_bets.upstream_rows import TeamBetH2hHitRateRow
+
+logger = logging.getLogger(__name__)
 
 SPORT_KEY = "basketball_nba"
 MARKET_KEY = "h2h"
@@ -35,12 +38,24 @@ class NbaH2hSnapshotPipeline(NbaH2hSnapshotPipelineInterface):
 
     def run(self, request: SnapshotRequest) -> SnapshotRunResult:
         if request.sport_key != SPORT_KEY or request.market_key != MARKET_KEY:
+            logger.warning(
+                "Rejected snapshot request expected sport_key=%s market_key=%s got sport_key=%s market_key=%s",
+                SPORT_KEY,
+                MARKET_KEY,
+                request.sport_key,
+                request.market_key,
+            )
             raise ValueError(
                 f"NbaH2hSnapshotPipeline requires sport_key={SPORT_KEY!r} and "
                 f"market_key={MARKET_KEY!r}, got {request.sport_key!r}/{request.market_key!r}",
             )
 
         observation_time = request.observation_time
+        logger.info(
+            "Starting NBA H2H snapshot run observation_time=%s",
+            observation_time,
+        )
+
         odds_rows = self.odds_repo.fetch_pregame_odds(
             sport_key=SPORT_KEY,
             market_key=MARKET_KEY,
@@ -49,6 +64,13 @@ class NbaH2hSnapshotPipeline(NbaH2hSnapshotPipelineInterface):
         hit_rate_rows = self.hit_rate_repo.fetch_pregame_hit_rates(
             observation_time=observation_time,
         )
+        logger.info(
+            "Fetched pregame sources observation_time=%s odds_rows=%s hit_rate_rows=%s",
+            observation_time,
+            len(odds_rows),
+            len(hit_rate_rows),
+        )
+
         hit_rate_by_key = _index_hit_rates(hit_rate_rows)
 
         created_at = self.now_fn()
@@ -57,9 +79,16 @@ class NbaH2hSnapshotPipeline(NbaH2hSnapshotPipelineInterface):
         skipped_leakage = 0
 
         for odds in odds_rows:
-            hit_rate = hit_rate_by_key.get(_join_key(odds))
+            join_key = _join_key(odds)
+            hit_rate = hit_rate_by_key.get(join_key)
             if hit_rate is None:
                 skipped_leakage += 1
+                logger.debug(
+                    "Skipping odds candidate with no hit rate row event_id=%s bookmaker=%s outcome_name=%s",
+                    odds.event_id,
+                    odds.bookmaker,
+                    odds.outcome_name,
+                )
                 continue
 
             record = self.builder.build(
@@ -71,19 +100,49 @@ class NbaH2hSnapshotPipeline(NbaH2hSnapshotPipelineInterface):
             )
             if record is None:
                 skipped_leakage += 1
+                logger.debug(
+                    "Builder rejected odds/hit-rate pair event_id=%s bookmaker=%s outcome_name=%s",
+                    odds.event_id,
+                    odds.bookmaker,
+                    odds.outcome_name,
+                )
                 continue
 
             if self.snapshot_repo.insert_if_absent(record):
                 snapshotted += 1
+                logger.debug(
+                    "Snapshotted row event_id=%s bookmaker=%s outcome_name=%s snapshot_version=%s",
+                    record.event_id,
+                    record.bookmaker,
+                    record.outcome_name,
+                    record.snapshot_version,
+                )
             else:
                 skipped_existing += 1
+                logger.debug(
+                    "Snapshot already exists event_id=%s bookmaker=%s outcome_name=%s snapshot_version=%s",
+                    record.event_id,
+                    record.bookmaker,
+                    record.outcome_name,
+                    record.snapshot_version,
+                )
 
-        return SnapshotRunResult(
+        result = SnapshotRunResult(
             candidates=len(odds_rows),
             snapshotted=snapshotted,
             skipped_existing=skipped_existing,
             skipped_leakage=skipped_leakage,
         )
+        logger.info(
+            "NBA H2H snapshot run complete observation_time=%s candidates=%s snapshotted=%s "
+            "skipped_existing=%s skipped_leakage=%s",
+            observation_time,
+            result.candidates,
+            result.snapshotted,
+            result.skipped_existing,
+            result.skipped_leakage,
+        )
+        return result
 
 
 def _join_key(odds) -> tuple[str, str, str, str]:

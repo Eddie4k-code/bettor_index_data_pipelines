@@ -1,11 +1,13 @@
 """Tests for the NBA H2H team-bet snapshot vertical slice (pipeline + mocked repos)."""
 
+import logging
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
 
 from builders.team_bets.h2h_snapshot_builder import H2hSnapshotBuilder
+from pipelines.team_bets import nba_h2h_snapshot_pipeline
 from pipelines.team_bets.nba_h2h_snapshot_pipeline import NbaH2hSnapshotPipeline
 from schemas.snapshot import SnapshotRequest, SnapshotRunResult
 from schemas.team_bets import NbaH2hSnapshotRecord
@@ -188,3 +190,44 @@ class TestNbaH2hSnapshotPipeline:
             pipeline.run(
                 _request(sport_key=sport_key, market_key=market_key),
             )
+
+
+class TestNbaH2hSnapshotPipelineLogging:
+    def test_logs_run_lifecycle_at_info(self, caplog):
+        caplog.set_level(logging.INFO, logger=nba_h2h_snapshot_pipeline.logger.name)
+        pipeline = _pipeline(
+            odds_rows=[_odds_row()],
+            hit_rate_rows=[_hit_rate_row()],
+        )
+
+        pipeline.run(_request())
+
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("Starting NBA H2H snapshot run" in message for message in messages)
+        assert any("Fetched pregame sources" in message for message in messages)
+        assert any("NBA H2H snapshot run complete" in message for message in messages)
+        assert any("snapshotted=1" in message for message in messages)
+
+    def test_logs_skip_reasons_at_debug(self, caplog):
+        caplog.set_level(logging.DEBUG, logger=nba_h2h_snapshot_pipeline.logger.name)
+        pipeline = _pipeline(
+            odds_rows=[_odds_row()],
+            hit_rate_rows=[_hit_rate_row(event_id="evt-other")],
+        )
+
+        pipeline.run(_request())
+
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("no hit rate row" in message for message in messages)
+
+    def test_logs_warning_for_mismatched_request(self, caplog):
+        caplog.set_level(logging.WARNING, logger=nba_h2h_snapshot_pipeline.logger.name)
+        pipeline = _pipeline()
+
+        with pytest.raises(ValueError):
+            pipeline.run(_request(sport_key="americanfootball_nfl", market_key="h2h"))
+
+        assert any(
+            record.levelno == logging.WARNING and "Rejected snapshot request" in record.getMessage()
+            for record in caplog.records
+        )
