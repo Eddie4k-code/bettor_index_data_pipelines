@@ -4,8 +4,6 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from sport_keys import normalize_sport_key
-
 ALLOWED_BOOKMAKERS: frozenset[str] = frozenset({
     "draftkings",
     "fanduel",
@@ -22,10 +20,6 @@ class SnapshotRequest(BaseModel):
     sport_key: str
     market_key: str
     observation_time: datetime
-
-    @property
-    def normalized_sport_key(self) -> str:
-        return normalize_sport_key(self.sport_key)
 
 
 class SnapshotRunResult(BaseModel):

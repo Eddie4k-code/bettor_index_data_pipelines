@@ -47,14 +47,14 @@ def test_allowed_bookmakers_match_upstream_scope():
     })
 
 
-def test_snapshot_request_normalizes_sport_key():
+def test_snapshot_request_preserves_sport_key():
     request = SnapshotRequest(
-        sport_key="FOOTBALL_NFL",
+        sport_key="americanfootball_nfl",
         market_key="spreads",
         observation_time=datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc),
     )
 
-    assert request.normalized_sport_key == "americanfootball_nfl"
+    assert request.sport_key == "americanfootball_nfl"
 
 
 def test_snapshot_request_is_frozen():
