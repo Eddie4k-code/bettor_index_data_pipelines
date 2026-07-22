@@ -1,0 +1,11 @@
+"""ABC for append-only CFB totals snapshot persistence."""
+
+from abc import ABC, abstractmethod
+
+from schemas.team_bets import CfbTotalsSnapshotRecord
+
+
+class CfbTotalsSnapshotRepositoryInterface(ABC):
+    @abstractmethod
+    def insert_if_absent(self, record: CfbTotalsSnapshotRecord) -> bool:
+        """Insert the row when PK is absent; return False when it already exists."""
