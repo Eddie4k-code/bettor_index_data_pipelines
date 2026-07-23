@@ -292,6 +292,16 @@ def parse_observation_time(value: str) -> datetime:
     return parsed
 
 
+def default_observation_time() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def resolve_observation_time(value: datetime | None) -> datetime:
+    if value is not None:
+        return value
+    return default_observation_time()
+
+
 def create_snapshot_pipeline(subcommand: str, db) -> Any:
     spec = SNAPSHOT_SPECS.get(subcommand)
     if spec is None:
@@ -368,9 +378,9 @@ def build_parser() -> argparse.ArgumentParser:
         )
         cmd_parser.add_argument(
             "--observation-time",
-            required=True,
+            default=None,
             type=parse_observation_time,
-            help="ISO-8601 cutoff for pregame joins (e.g. 2026-07-21T12:00:00Z).",
+            help="ISO-8601 cutoff for pregame joins (defaults to current UTC time).",
         )
 
     grade_parser = subparsers.add_parser(
@@ -404,7 +414,10 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.command == "snapshot":
-        result = run_snapshot(args.snapshot_type, args.observation_time)
+        result = run_snapshot(
+            args.snapshot_type,
+            resolve_observation_time(args.observation_time),
+        )
         print(
             "Snapshot complete "
             f"candidates={result.candidates} "
