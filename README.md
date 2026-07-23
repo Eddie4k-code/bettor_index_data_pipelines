@@ -2,14 +2,14 @@
 
 Build **clean, reproducible pregame sports betting datasets** for BettorIndex machine learning and model training.
 
-This repo reads shared PostgreSQL tables populated by upstream ingestion and hit-rate workers, assembles point-in-time feature rows, and persists immutable snapshots. Grading (post-game labels) and export (training Parquet/CSV) are planned next stages.
+This repo reads shared PostgreSQL tables populated by upstream ingestion and hit-rate workers, assembles point-in-time feature rows, persists immutable snapshots, and writes post-game labels after games finish. Export (training Parquet/CSV) is the next stage.
 
 ## What this repo does
 
 | Stage | Status | Description |
 |-------|--------|-------------|
 | **Snapshot** | Implemented | Join pregame odds + hit rates at a fixed `observation_time`; write append-only feature rows |
-| **Grade** | Planned | Write win/loss/push labels after games finish (separate from features) |
+| **Grade** | Implemented | Write win/loss/push labels after games finish (separate from features) |
 | **Export** | Planned | Join snapshots + grades into partitioned training datasets |
 
 ## What this repo does not do
@@ -33,22 +33,22 @@ bettor_index_team_bets_hit_rate_worker/  → team W-L / cover / totals hit rates
         ↓
 bettorindex_data_pipelines/  (this repo)
   → snapshot pregame features
-  → grade outcomes (planned)
+  → grade outcomes
   → export ML datasets (planned)
 ```
 
 ## Supported team-bet snapshots
 
-Four sports × three markets = **12 explicit snapshot pipelines**, each with its own pipeline class, repositories, owned table, and CLI subcommand.
+Four sports × three markets = **12 explicit snapshot and grade pipelines**, each with its own pipeline class, repositories, owned tables, and CLI subcommands.
 
 | Sport | `sport_key` | Markets | CLI examples |
 |-------|-------------|---------|--------------|
-| NBA | `basketball_nba` | h2h, spreads, totals | `snapshot nba-h2h`, `nba-spreads`, `nba-totals` |
-| MLB | `baseball_mlb` | h2h, spreads, totals | `snapshot mlb-h2h`, `mlb-spreads`, `mlb-totals` |
-| NFL | `americanfootball_nfl` | h2h, spreads, totals | `snapshot nfl-h2h`, `nfl-spreads`, `nfl-totals` |
-| CFB | `americanfootball_ncaaf` | h2h, spreads, totals | `snapshot cfb-h2h`, `cfb-spreads`, `cfb-totals` |
+| NBA | `basketball_nba` | h2h, spreads, totals | `snapshot nba-h2h`, `grade nba-h2h`, … |
+| MLB | `baseball_mlb` | h2h, spreads, totals | `snapshot mlb-h2h`, `grade mlb-h2h`, … |
+| NFL | `americanfootball_nfl` | h2h, spreads, totals | `snapshot nfl-h2h`, `grade nfl-h2h`, … |
+| CFB | `americanfootball_ncaaf` | h2h, spreads, totals | `snapshot cfb-h2h`, `grade cfb-h2h`, … |
 
-**CFB note:** Pipelines and owned tables exist, but CFB runs currently log and return zero counts until upstream `cfb_team_bet_*_hit_rates` tables are available. NBA, MLB, and NFL are fully runnable against PostgreSQL.
+**CFB note:** Pipelines and owned tables exist, but CFB snapshot and grade runs currently log and return zero counts until upstream `cfb_team_bet_*_hit_rates` tables are available. NBA, MLB, and NFL are fully runnable against PostgreSQL.
 
 **Bookmakers in scope:** `draftkings`, `fanduel`, `betmgm`, `fanatics`
 
@@ -74,7 +74,7 @@ Create a `.env` file in the project root:
 DATABASE_URL=postgresql://user:password@localhost:5432/bettorindex
 ```
 
-Owned snapshot tables are created automatically on first CLI run.
+Owned snapshot and grade tables are created automatically on first CLI run.
 
 ### Run a snapshot
 
@@ -96,6 +96,29 @@ List all snapshot subcommands:
 python main.py snapshot --help
 ```
 
+### Run a grade
+
+After games finish, write post-game labels for snapshot rows that lack a grade:
+
+```bash
+python main.py grade nba-h2h
+python main.py grade nfl-spreads --event-id abc123eventid
+```
+
+Example output:
+
+```text
+Grade complete candidates=38 graded=36 skipped_existing=0 skipped_ungradeable=2
+```
+
+Grades join to snapshots on `(observation_time, event_id, bookmaker, outcome_name, snapshot_version)` and store `grade_outcome` as `win`, `loss`, `push`, or `void`.
+
+List all grade subcommands:
+
+```bash
+python main.py grade --help
+```
+
 ## How snapshots work
 
 Each snapshot row captures one observable market state at `observation_time`:
@@ -105,20 +128,29 @@ Each snapshot row captures one observable market state at `observation_time`:
 3. **Features** — market-specific windows (W/L for h2h, cover for spreads, clear for totals)
 4. **Persistence** — append-only writes to owned `{sport}_team_bet_{market}_pregame_snapshots` tables; duplicate keys are skipped
 
-**Anti-leakage:** Features never use final scores, post-game stats, or line moves after `observation_time`. Grades (when implemented) live in separate tables and are joined only at export time.
+**Anti-leakage:** Features never use final scores, post-game stats, or line moves after `observation_time`. Grades live in separate `{sport}_team_bet_{market}_grades` tables and are joined only at export time.
+
+## How grades work
+
+Each grade pipeline:
+
+1. **Candidates** — owned snapshot rows with `commence_time <= now` and no matching grade PK
+2. **Game lookup** — final scores from shared `games` (matchup + commence window)
+3. **Label** — shared h2h / spreads / totals builders compute `win` / `loss` / `push`
+4. **Persistence** — append-only writes to owned grade tables; duplicate keys are skipped
 
 ## Project structure
 
 ```text
-main.py                     # CLI: snapshot subcommands (grade/export planned)
-pipelines/team_bets/        # One orchestrator per sport×market (12 pipelines)
-builders/team_bets/         # Shared h2h / spreads / totals snapshot builders
-repositories/               # Upstream reads + owned snapshot writes
+main.py                     # CLI: snapshot + grade subcommands (export planned)
+pipelines/team_bets/        # One snapshot + grade orchestrator per sport×market (24 pipelines)
+builders/team_bets/         # Shared h2h / spreads / totals snapshot + grade builders
+repositories/               # Upstream reads + owned snapshot/grade reads and writes
 interfaces/                 # ABCs for repos, pipelines, builders
-schemas/                    # Pydantic snapshot records and request/result types
+schemas/                    # Pydantic snapshot/grade records and request/result types
 db/models/
   upstream/                 # Read-only ORM mirrors of shared tables
-  owned/                    # Snapshot tables owned by this repo
+  owned/                    # Snapshot + grade tables owned by this repo
 tests/                      # pytest (mocked deps; no real DB in unit tests)
 ```
 
@@ -138,6 +170,7 @@ For deeper contracts (grading rules, export layout, sport key normalization, ref
 
 - [x] Team-bet snapshot pipelines for NBA, MLB, NFL, CFB (12 types)
 - [x] CLI snapshot subcommands
-- [ ] Grade pipelines (post-game labels from `games` / player stats)
+- [x] Grade pipelines (post-game labels from `games`)
+- [x] CLI grade subcommands
 - [ ] Export pipelines (Parquet/CSV partitioned by sport, market, observation date)
 - [ ] Player prop snapshots (separate vertical slices)
