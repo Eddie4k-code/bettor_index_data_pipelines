@@ -106,8 +106,8 @@ All services share PostgreSQL via `DATABASE_URL`.
 | Odds (current + history) | `odds_api_props`, `odds_api_props_history`, `odds_api_featured_odds`, `odds_api_featured_odds_history` |
 | Prop features | `{nba,mlb,nfl}_hit_rates` |
 | Team features | `{sport}_team_bet_{,totals_,spreads_}hit_rates` |
-| Grading (new — owned by this repo) | e.g. `{sport}_prop_grades`, `{sport}_team_bet_grades` |
-| Snapshots (new — owned by this repo) | e.g. `{sport}_pregame_feature_snapshots` |
+| Grading (owned by this repo) | `{sport}_team_bet_{h2h,spreads,totals}_grades` |
+| Snapshots (owned by this repo) | `{sport}_team_bet_{h2h,spreads,totals}_pregame_snapshots` |
 
 **Feature sources:** hit-rate tables + raw stats/odds. Summaries and signals (`{sport}_summaries`, lean columns) are downstream derivatives — use with care; prefer raw hit-rate and odds columns for ML features unless the snapshot time of the summary is proven pregame.
 
@@ -135,14 +135,45 @@ Rules:
 
 Grades are labels, not features. Write them only once the game is complete and stats/scores are available.
 
+### Grade row primary key (export join to snapshots)
+
+Match snapshot PK on:
+
+| Column | Purpose |
+|--------|---------|
+| `observation_time` | Links to the snapshotted feature row |
+| `event_id` | Event identity |
+| `bookmaker` | Book scope |
+| `outcome_name` | Side picked (team name or Over/Under) |
+| `snapshot_version` | Feature schema version (e.g. `nba_h2h_v1`) |
+
+Export join: `snapshots.* = grades.*` on these five columns.
+
+### Label columns
+
+| Column | Purpose |
+|--------|---------|
+| `grade_outcome` | `win` \| `loss` \| `push` \| `void` |
+| `grade_version` | Grading logic version (e.g. `nba_h2h_grade_v1`) |
+| `home_team_score`, `away_team_score` | Scores used to compute the label |
+| `outcome_point` | Line from snapshot (spreads/totals push logic) |
+| `commence_time` | From snapshot (partitioning / export) |
+| `graded_at`, `created_at` | Audit timestamps |
+
+Shared types live in `schemas/grade.py` (`GradeRequest`, `GradeRunResult`, `GradeOutcome`).
+
+### Grade logic
+
 | Market type | Grade logic |
 |-------------|-------------|
 | Player props | Compare stat value vs line (`outcome_point`); handle push, DNP, void rules per sport |
-| `h2h` | Home/away winner from `games` |
+| `h2h` | Outcome team score vs opponent (`win` / `loss` / `push` on tie) |
 | `totals` | Over/under vs combined score |
-| `spreads` | Cover vs handicap; document push handling |
+| `spreads` | Cover vs handicap; push when margin is zero |
 
-Align grade PKs with hit-rate / odds row keys so exports join features → labels cleanly.
+Completed game statuses for grading: `finished` (NBA), `status_final` (MLB), `final` (NFL).
+
+Align grade PKs with snapshot row keys so exports join features → labels cleanly. Grades are append-only; one grade row per snapshot row for v1.
 
 ## Export Contract
 
@@ -162,14 +193,12 @@ Include metadata sufficient to reproduce the export: `observation_time` range, s
 ## Architecture
 
 ```text
-main.py                  # CLI entrypoint (export, snapshot, grade commands)
-pipelines/               # orchestration: snapshot, grade, export
-  snapshot_pipeline.py
-  grade_pipeline.py
-  export_pipeline.py
-repositories/            # read-only queries against shared tables; write snapshot/grade tables
+main.py                  # CLI entrypoint (snapshot, grade, export commands)
+pipelines/team_bets/     # 12 snapshot + 12 grade orchestrators (explicit per sport×market)
+builders/team_bets/      # Shared h2h / spreads / totals snapshot + grade builders
+repositories/            # Upstream reads + owned snapshot/grade reads and writes
 interfaces/              # ABC for every external boundary
-schemas/                 # dataclass / Pydantic row shapes for snapshots and exports
+schemas/                 # Pydantic snapshot/grade records and request/result types
 db/models/               # SQLAlchemy models for snapshot + grade tables only
 tests/                   # pytest; write failing test first (TDD)
 ```
@@ -215,7 +244,8 @@ Before merging any feature or export code, verify:
 ```bash
 pip install -r requirements.txt
 pytest
-python main.py --help   # snapshot | grade | export subcommands (wire incrementally)
+python main.py --help          # snapshot | grade | export subcommands
+python main.py grade nba-h2h   # optional --event-id filter
 ```
 
 ## Out of Scope
