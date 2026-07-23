@@ -75,9 +75,20 @@ class TestBuildParser:
         ])
         assert args.snapshot_type == subcommand
 
-    def test_requires_observation_time(self):
-        with pytest.raises(SystemExit):
-            main.build_parser().parse_args(["snapshot", "nba-h2h"])
+    def test_snapshot_observation_time_defaults_to_none_for_resolution(self):
+        args = main.build_parser().parse_args(["snapshot", "nba-h2h"])
+        assert args.snapshot_type == "nba-h2h"
+        assert args.observation_time is None
+
+    def test_resolve_observation_time_uses_explicit_value(self):
+        assert main.resolve_observation_time(OBSERVATION_TIME) == OBSERVATION_TIME
+
+    def test_resolve_observation_time_defaults_to_now(self, mocker):
+        mocker.patch(
+            "main.default_observation_time",
+            return_value=OBSERVATION_TIME,
+        )
+        assert main.resolve_observation_time(None) == OBSERVATION_TIME
 
     def test_parses_grade_subcommand_with_optional_event_id(self):
         args = main.build_parser().parse_args([
@@ -199,6 +210,22 @@ class TestMain:
         assert exit_code == 0
         main.run_snapshot.assert_called_once_with("mlb-totals", OBSERVATION_TIME)
         assert "snapshotted=2" in capsys.readouterr().out
+
+    def test_main_runs_snapshot_subcommand_with_default_observation_time(self, mocker, capsys):
+        mocker.patch("main.default_observation_time", return_value=OBSERVATION_TIME)
+        mocker.patch(
+            "main.run_snapshot",
+            return_value=SnapshotRunResult(
+                candidates=1,
+                snapshotted=1,
+                skipped_existing=0,
+                skipped_leakage=0,
+            ),
+        )
+        exit_code = main.main(["snapshot", "nba-h2h"])
+        assert exit_code == 0
+        main.run_snapshot.assert_called_once_with("nba-h2h", OBSERVATION_TIME)
+        assert "snapshotted=1" in capsys.readouterr().out
 
     def test_main_runs_grade_subcommand(self, mocker, capsys):
         mocker.patch(

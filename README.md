@@ -79,10 +79,11 @@ Owned snapshot and grade tables are created automatically on first CLI run.
 ### Run a snapshot
 
 ```bash
+python main.py snapshot nba-h2h
 python main.py snapshot nba-h2h --observation-time 2026-07-21T12:00:00Z
 ```
 
-`--observation-time` accepts ISO-8601 timestamps (e.g. `2026-07-21T08:00:00-04:00` or `…Z`). This is the cutoff for all pregame joins: odds and hit rates must be observable at or before this time, and the game must not have started yet.
+When omitted, `--observation-time` defaults to the current UTC time. You can also pass an explicit ISO-8601 timestamp (e.g. `2026-07-21T08:00:00-04:00` or `…Z`) to reproduce a historical cutoff. This is the cutoff for all pregame joins: odds and hit rates must be observable at or before this time, and the game must not have started yet.
 
 Example output:
 
