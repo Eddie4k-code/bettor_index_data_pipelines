@@ -1,3 +1,9 @@
+from schemas.export import (
+    EXPORT_LABEL_COLUMNS,
+    ExportManifest,
+    ExportRequest,
+    ExportRunResult,
+)
 from schemas.grade import (
     GradeOutcome,
     GradeRequest,
@@ -42,6 +48,10 @@ from schemas.team_bets import (
 
 __all__ = [
     "ALLOWED_BOOKMAKERS",
+    "EXPORT_LABEL_COLUMNS",
+    "ExportManifest",
+    "ExportRequest",
+    "ExportRunResult",
     "CfbH2hGradeRecord",
     "CfbH2hSnapshotRecord",
     "CfbSpreadsGradeRecord",
